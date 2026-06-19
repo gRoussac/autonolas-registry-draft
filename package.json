@@ -5,16 +5,18 @@
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check"
   },
   "dependencies": {
-    "@coral-xyz/anchor": "^0.31.0",
-    "@noble/hashes": "^1.8.0"
+    "@coral-xyz/anchor": "0.32.1",
+    "@metaplex-foundation/mpl-token-metadata": "^3.4.0",
+    "@noble/hashes": "^2.2.0",
+    "@solana/spl-token": "^0.4.14"
   },
   "devDependencies": {
-    "@types/bn.js": "^5.1.0",
-    "@types/chai": "^5.2.1",
+    "@types/bn.js": "^5.2.0",
+    "@types/chai": "^5.2.3",
     "@types/mocha": "^10.0.10",
     "chai": "^5.2.0",
-    "mocha": "^11.2.2",
-    "prettier": "^3.5.3",
+    "mocha": "^11.7.6",
+    "prettier": "^3.8.4",
     "ts-mocha": "^11.1.0",
     "typescript": "^5.7.3"
   }

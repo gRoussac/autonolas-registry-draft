@@ -2,12 +2,21 @@
 use anchor_lang::{
     prelude::*,
     solana_program::{
-        hash::hash,
         program::invoke_signed,
         system_instruction::{self, transfer},
     },
     AccountDeserialize, Discriminator,
 };
+use solana_sha256_hasher::hash;
+use anchor_spl::token::{self, Mint, MintTo, Token, TokenAccount};
+use constants::*;
+use error::ErrorCode;
+use events::*;
+use mpl_token_metadata::instructions::CreateMetadataAccountV3Builder;
+use mpl_token_metadata::types::DataV2;
+use pda::*;
+use service_state::ServiceState;
+use state::*;
 
 mod constants;
 pub mod error;
@@ -15,12 +24,6 @@ pub mod events;
 mod pda;
 mod service_state;
 mod state;
-use constants::*;
-use error::ErrorCode;
-use events::*;
-use pda::*;
-use service_state::ServiceState;
-use state::*;
 
 declare_id!("9Q2mQxDLH91HLaQUYyxV5n9WhA1jzgVThJwfJTNqEUNP");
 
@@ -32,6 +35,7 @@ pub struct AgentParams {
 
 #[program]
 pub mod registry {
+
     use super::*;
 
     pub fn initialize(
@@ -110,6 +114,78 @@ pub mod registry {
             service_id,
             config_hash
         });
+
+        assert_eq!(service_owner, ctx.accounts.token_account.owner);
+
+        // Mint the service token to the service_owner
+        let seeds: &[&[u8]] = &[b"mint_auth", &[ctx.bumps.mint_auth]];
+        let signer_seeds: &[&[&[u8]]] = &[seeds];
+
+        let minter = &ctx.accounts.minter;
+
+        let cpi_accounts = MintTo {
+            mint: minter.to_account_info(),
+            to: ctx.accounts.token_account.to_account_info(),
+            authority: ctx.accounts.mint_auth.to_account_info(),
+        };
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_context = CpiContext::new(cpi_program, cpi_accounts).with_signer(signer_seeds);
+        token::mint_to(cpi_context, 1)?;
+
+        // metadata PDA
+        let metadata_seeds = &[
+            b"metadata",
+            mpl_token_metadata::ID.as_ref(),
+            &minter.key().to_bytes(),
+        ];
+
+        let (metadata_pda, _bump) =
+            Pubkey::find_program_address(metadata_seeds, &mpl_token_metadata::ID);
+
+        let uri = format!("{}{}", registry.base_uri, ctx.accounts.service.key());
+
+        let data = DataV2 {
+            name: registry.name.clone(),
+            symbol: registry.symbol.clone(),
+            uri,
+            seller_fee_basis_points: 0,
+            creators: None,
+            collection: None,
+            uses: None,
+        };
+
+        let ix = CreateMetadataAccountV3Builder::new()
+            .metadata(metadata_pda)
+            .mint(ctx.accounts.minter.key())
+            .mint_authority(ctx.accounts.mint_auth.key())
+            .payer(ctx.accounts.user.key())
+            .update_authority(ctx.accounts.mint_auth.key(), false)
+            .data(data)
+            .is_mutable(true)
+            .instruction();
+
+        //
+        // ✅ Invoke the metadata instruction
+
+        msg!("metadata_pda: {:?}", metadata_pda);
+        msg!("Minter: {:?}", ctx.accounts.minter.key());
+        msg!("Mint auth: {:?}", ctx.accounts.mint_auth.key());
+        msg!("User: {:?}", ctx.accounts.user.key());
+        msg!("System Program: {:?}", ctx.accounts.system_program.key());
+
+        invoke_signed(
+            &ix,
+            &[
+                ctx.accounts.metadata.to_account_info(),
+                ctx.accounts.minter.to_account_info(),
+                ctx.accounts.mint_auth.to_account_info(),
+                ctx.accounts.user.to_account_info(),
+                ctx.accounts.token_metadata_program.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+                // ctx.accounts.rent.to_account_info(),
+            ],
+            signer_seeds,
+        )?;
 
         registry.total_supply = service_id;
         registry.locked = false;
@@ -275,7 +351,7 @@ pub mod registry {
 
             // ! Write discriminator, this is important to retrieve the account later
             let discriminator =
-                &anchor_lang::solana_program::hash::hash("account:AgentParamAccount".as_bytes())
+                &hash("account:AgentParamAccount".as_bytes())
                     .to_bytes()[..8];
             data[..8].copy_from_slice(discriminator);
 
@@ -661,7 +737,7 @@ pub mod registry {
             operator_bond_account.bond -= slashed_amount;
             let mut data = operator_bond_info.try_borrow_mut_data()?;
             let discriminator =
-                &anchor_lang::solana_program::hash::hash("account:OperatorBondAccount".as_bytes())
+                &hash("account:OperatorBondAccount".as_bytes())
                     .to_bytes()[..8];
             data[..8].copy_from_slice(discriminator);
             operator_bond_account.serialize(&mut &mut data[8..])?;
@@ -1496,7 +1572,7 @@ impl ServiceRegistry {
             .push(agent_instance);
 
         let mut data = agent_instances_account_info_index.try_borrow_mut_data()?;
-        let discriminator = &anchor_lang::solana_program::hash::hash(
+        let discriminator = &hash(
             "account:ServiceAgentInstancesIndex".as_bytes(),
         )
         .to_bytes()[..8];
@@ -1550,7 +1626,7 @@ impl ServiceRegistry {
 
         slot_counter.count += 1;
         let mut data = slot_counter_info.try_borrow_mut_data()?;
-        let discriminator = &anchor_lang::solana_program::hash::hash(
+        let discriminator = &hash(
             "account:ServiceAgentSlotCounterAccount".as_bytes(),
         )
         .to_bytes()[..8];
@@ -1601,7 +1677,7 @@ impl ServiceRegistry {
         service_agent_instance_data.agent_instance = agent_instance;
 
         let mut data = service_agent_instance_account_info.try_borrow_mut_data()?;
-        let discriminator = &anchor_lang::solana_program::hash::hash(
+        let discriminator = &hash(
             "account:ServiceAgentInstanceAccount".as_bytes(),
         )
         .to_bytes()[..8];
@@ -1649,7 +1725,7 @@ impl ServiceRegistry {
         operator_agent_instance_data.service_agent_instance = service_agent_instance_pda;
 
         let mut data = operator_agent_instance_account_info.try_borrow_mut_data()?;
-        let discriminator = &anchor_lang::solana_program::hash::hash(
+        let discriminator = &hash(
             "account:OperatorAgentInstanceAccount".as_bytes(),
         )
         .to_bytes()[..8];
@@ -1740,7 +1816,7 @@ impl ServiceRegistry {
 
         let mut data = operator_bond_account_info.try_borrow_mut_data()?;
         let discriminator =
-            &anchor_lang::solana_program::hash::hash("account:OperatorBondAccount".as_bytes())
+            &hash("account:OperatorBondAccount".as_bytes())
                 .to_bytes()[..8];
         data[..8].copy_from_slice(discriminator);
         operator_bond_data.serialize(&mut &mut data[8..])?;
@@ -1862,7 +1938,7 @@ pub struct Initialize<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(config_hash: [u8; 32])]
+#[instruction(config_hash: [u8; 32], service_owner: Pubkey)]
 pub struct CreateService<'info> {
     #[account(mut)]
     pub registry: Account<'info, ServiceRegistry>,
@@ -1879,7 +1955,54 @@ pub struct CreateService<'info> {
     #[account(mut, address = registry.manager)]
     pub user: Signer<'info>,
 
+    /// CHECK: owner
+    #[account(mut, address = service_owner)]
+    pub mint_owner: AccountInfo<'info>,
+
+    // /// CHECK: metadata
+    // #[account(mut)]
+    // pub metadata: UncheckedAccount<'info>,
+
+    // /// CHECK: manually validated as Metaplex Token Metadata program
+    // pub token_metadata_program: UncheckedAccount<'info>,
+    /// CHECK: PDA mint authority
+    #[account(seeds = [b"mint_auth"], bump)]
+    pub mint_auth: UncheckedAccount<'info>,
+
+    #[account(
+        init_if_needed,
+        payer = user,
+        seeds = [b"mint"],
+        bump,
+        mint::decimals = 0,
+        mint::authority = mint_auth
+    )]
+    pub minter: Account<'info, Mint>,
+
+    #[account(
+        init_if_needed,
+        payer = user,
+        seeds = [b"token_account"],
+        bump,
+        token::mint = minter,
+        token::authority = mint_owner
+    )]
+    pub token_account: Account<'info, TokenAccount>,
+
+    /// CHECK: verified by Metaplex program
+    #[account(mut)]
+    pub metadata: UncheckedAccount<'info>,
+
+    /// CHECK: verified by Metaplex program
+    #[account(mut)]
+    pub master_edition: UncheckedAccount<'info>,
+
+    /// CHECK: verified by Metaplex program
+    #[account(address = mpl_token_metadata::ID)]
+    pub token_metadata_program: UncheckedAccount<'info>,
+
     pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]

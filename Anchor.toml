@@ -1,4 +1,5 @@
 [toolchain]
+anchor_version = "0.32.1"
 package_manager = "yarn"
 
 [features]
@@ -16,4 +17,4 @@ cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
-test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+test = "NODE_OPTIONS='--no-strip-types' yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
